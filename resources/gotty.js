@@ -5,11 +5,26 @@
     var protocols = ["gotty"];
     var autoReconnect = -1;
 
+    // === 新增: 配置空闲超时时间 (毫秒) ===
+    var idleTimeout = 1 * 60 * 1000; // 5分钟
+    var idleTimer;
+
+    var resetIdleTimer = function(ws, term) {
+        if (idleTimer) clearTimeout(idleTimer);
+        idleTimer = setTimeout(function() {
+            console.log("Idle timeout reached, closing session...");
+            if (term) {
+                term.io.showOverlay("Idle Timeout - Session Closed", null);
+                term.uninstallKeyboard();
+            }
+            ws.close();
+        }, idleTimeout);
+    };
+
     var openWs = function() {
         var ws = new WebSocket(url, protocols);
 
         var term;
-
         var pingTimer;
 
         ws.onopen = function(event) {
@@ -19,7 +34,6 @@
             hterm.defaultStorage = new lib.Storage.Memory();
 
             term = new hterm.Terminal();
-
             term.getPrefs().set("send-encoding", "raw");
 
             term.onTerminalReady = function() {
@@ -27,22 +41,20 @@
 
                 io.onVTKeystroke = function(str) {
                     ws.send("0" + str);
+                    resetIdleTimer(ws, term); // 有输入 -> 重置空闲计时
                 };
 
-                io.sendString = io.onVTKeystroke;
+                io.sendString = function(str) {
+                    ws.send("0" + str);
+                    resetIdleTimer(ws, term); // 粘贴文字输入时也重置
+                };
 
                 io.onTerminalResize = function(columns, rows) {
-                    ws.send(
-                        "2" + JSON.stringify(
-                            {
-                                columns: columns,
-                                rows: rows,
-                            }
-                        )
-                    )
+                    ws.send("2" + JSON.stringify({ columns: columns, rows: rows }));
                 };
 
                 term.installKeyboard();
+                resetIdleTimer(ws, term); // 初始化时启动计时
             };
 
             term.decorate(document.getElementById("terminal"));
@@ -80,16 +92,16 @@
                 term.io.showOverlay("Connection Closed", null);
             }
             clearInterval(pingTimer);
+            clearTimeout(idleTimer); // 清理空闲定时器
             if (autoReconnect > 0) {
                 setTimeout(openWs, autoReconnect * 1000);
             }
         };
     }
 
-
     var sendPing = function(ws) {
         ws.send("1");
     }
 
     openWs();
-})()
+})();
